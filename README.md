@@ -1,3 +1,3 @@
-# gptinfo
-This is a toy parser that decodes a GUID Partition Table (GPT).
+# partition_info
+This is a toy partition table parser that supports GUID Partition Table (GPT).
 
