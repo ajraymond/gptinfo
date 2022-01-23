@@ -11,6 +11,7 @@ GPT_NB_PARTITION_ENTRIES = 128
 GPT_PARTITION_ENTRIES_PER_LBA = 4
 GPT_GUID_SIZE_BYTES = 16
 
+# https://en.wikipedia.org/wiki/GUID_Partition_Table#Partition_type_GUIDs
 GPT_PARTITION_TYPE_GUID_UNUSED = '00000000-0000-0000-0000-000000000000'
 
 GPT_PARTITION_TYPE_GUIDS = {
@@ -176,7 +177,7 @@ def analyze_partition_entry(entry_bytes: bytes) -> None:
 
 def analyze_block_device(block_device: str) -> None:
     # Primary
-    print("=Primary=")
+    print("=GPT Primary=")
     header_bytes = read_lba(block_device, 1)
     analyze_header(header_bytes)
 
@@ -188,7 +189,7 @@ def analyze_block_device(block_device: str) -> None:
             analyze_partition_entry(entry_bytes)
 
     # Backup
-    print("=Backup=")
+    print("=GPT Backup=")
     header_bytes = read_lba(block_device, -1)
     analyze_header(header_bytes)
 

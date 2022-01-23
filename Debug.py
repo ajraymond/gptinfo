@@ -3,7 +3,7 @@ import math
 from ByteHelpers import bytes_hexstr
 
 
-DEBUG_ENABLED = True
+DEBUG_ENABLED = False
 
 
 def enable_debug(enabled: bool) -> None:

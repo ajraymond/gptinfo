@@ -3,6 +3,7 @@
 import sys
 import getopt
 
+import MBR
 import GPT
 from Debug import DEBUG, DEBUG_BYTES
 
@@ -44,6 +45,7 @@ def main():
     block_device = sys.argv[1]
     DEBUG("Analyzing %s" % block_device)
 
+    MBR.analyze(block_device)
     GPT.analyze_block_device(block_device)
 
 
