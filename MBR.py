@@ -9,11 +9,24 @@ MBR_PARTITION_ENTRY_SIZE_BYTES = 16
 MBR_PARTITION_ENTRY_CHS_SIZE_BYTES = 3
 
 # https://en.wikipedia.org/wiki/Partition_type#List_of_partition_IDs
-MBR_PARTITION_TYPE_GPT_PROTECTIVE = 0xEE
+MBR_PARTITION_TYPE_GPT_PROTECTIVE = 0xee
 
 MBR_PARTITION_TYPES = {
         0x00: "Unused entry",
-        0xEE: "GPT Protective MBR",
+        0x05: "Extended",
+        0x07: "HPFS/NTFS/exFAT",
+        0x0b: "W95 FAT32",
+        0x0c: "W95 FAT32 (LBA)",
+        0x0e: "W95 FAT16 (LBA)",
+        0x0f: "W95 Extended (LBA)",
+        0x82: "Linux swap / Solaris",
+        0x83: "Linux",
+        0x85: "Linux extended",
+        0x86: "NTFS volume set",
+        0x87: "NTFS volume set",
+        0x88: "Linux plaintext",
+        0x8e: "Linux LVM",
+        0xee: "GPT Protective MBR",
 }
 
 
