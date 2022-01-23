@@ -5,6 +5,7 @@ import math
 import struct
 
 from PartTypeGUID import partition_type_description
+from LBA import read_lba, LBA_SIZE_BYTES
 
 
 DEBUG = True
@@ -13,7 +14,6 @@ PARTITION_TABLE_HEADER_SIGNATURE = "EFI PART"
 PARTITION_TYPE_GUID_UNUSED = '00000000-0000-0000-0000-000000000000'
 
 ENTRY_SIZE_BYTES = 128
-LBA_SIZE_BYTES = 512
 NB_PARTITION_ENTRIES = 128
 PARTITION_ENTRIES_PER_LBA = 4
 UUID_SIZE_BYTES = 16
@@ -49,19 +49,6 @@ def print_error_exit(error_msg: str = None):
 
     sys.exit(1)
 
-
-def read_logical_block(f, lba_idx: int) -> bytes:
-    if not ((1 <= lba_idx <= 33) or (-33 <= lba_idx <= -1)):
-        raise ValueError("Invalid lba_idx (%d)" % lba_idx)
-
-    if lba_idx >= 0:
-        f.seek(lba_idx*LBA_SIZE_BYTES, 0)
-    else:
-        f.seek(lba_idx*LBA_SIZE_BYTES, 2)
-
-    block_bytes = f.read(LBA_SIZE_BYTES)
-
-    return block_bytes
 
 
 def get_logical_block_entry(lba: bytes, entry_idx: int) -> bytes:
@@ -178,14 +165,14 @@ def analyze_partition_entry(entry_bytes: bytes) -> None:
     print("    Partition name: %s" % partition_name_str)
 
 
-def analyze_block_device(f) -> None:
+def analyze_block_device(block_device: str) -> None:
     # Primary
     print("=Primary=")
-    header_bytes = read_logical_block(f, 1)
+    header_bytes = read_lba(block_device, 1)
     analyze_header(header_bytes)
 
     for i in range(NB_PARTITION_ENTRIES // PARTITION_ENTRIES_PER_LBA):
-        lba_bytes = read_logical_block(f, 2 + i)
+        lba_bytes = read_lba(block_device, 2 + i)
 
         for j in range(PARTITION_ENTRIES_PER_LBA):
             entry_bytes = get_logical_block_entry(lba_bytes, j)
@@ -193,11 +180,11 @@ def analyze_block_device(f) -> None:
 
     # Backup
     print("=Backup=")
-    header_bytes = read_logical_block(f, -1)
+    header_bytes = read_lba(block_device, -1)
     analyze_header(header_bytes)
 
     for i in range(NB_PARTITION_ENTRIES // PARTITION_ENTRIES_PER_LBA):
-        lba_bytes = read_logical_block(f, -33 + i)
+        lba_bytes = read_lba(block_device, -33 + i)
 
         for j in range(PARTITION_ENTRIES_PER_LBA):
             entry_bytes = get_logical_block_entry(lba_bytes, j)
@@ -210,10 +197,9 @@ def main():
 
 
     block_device = sys.argv[1]
+    DEBUG("Analyzing %s" % block_device)
 
-    with open(block_device, 'rb') as f:
-        DEBUG("Analyzing %s" % block_device)
-        analyze_block_device(f)
+    analyze_block_device(block_device)
 
 
 if __name__ == '__main__':
