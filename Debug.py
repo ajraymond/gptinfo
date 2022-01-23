@@ -2,10 +2,16 @@ import math
 
 from ByteHelpers import bytes_hexstr
 
-DEBUG = True
+
+DEBUG_ENABLED = True
+
+
+def enable_debug(enabled: bool) -> None:
+    DEBUG_ENABLED = enabled
+
 
 def DEBUG(msg: str):
-    if DEBUG:
+    if DEBUG_ENABLED:
         print("DEBUG: %s" % msg)
 
 
