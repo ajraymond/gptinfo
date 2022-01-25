@@ -1,8 +1,8 @@
 import struct
 
-from LBA import read_lba, LBA_SIZE_BYTES
-from ByteHelpers import bytes_hexstr
-from Debug import DEBUG, DEBUG_BYTES
+from lba import read_lba, LBA_SIZE_BYTES
+from bytehelpers import bytes_hexstr
+from debug import DEBUG, DEBUG_BYTES
 
 
 MBR_PARTITION_ENTRY_SIZE_BYTES = 16

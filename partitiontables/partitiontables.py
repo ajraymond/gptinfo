@@ -3,9 +3,9 @@
 import sys
 import getopt
 
-import MBR
-import GPT
-from Debug import DEBUG, DEBUG_BYTES
+import mbr
+import gpt
+from debug import DEBUG, DEBUG_BYTES
 
 
 def usage():
@@ -45,8 +45,8 @@ def main():
     block_device = sys.argv[1]
     DEBUG("Analyzing %s" % block_device)
 
-    MBR.analyze(block_device)
-    GPT.analyze_block_device(block_device)
+    mbr.analyze(block_device)
+    #gpt.analyze_block_device(block_device)
 
 
 if __name__ == '__main__':

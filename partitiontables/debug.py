@@ -1,6 +1,6 @@
 import math
 
-from ByteHelpers import bytes_hexstr
+from bytehelpers import bytes_hexstr
 
 
 DEBUG_ENABLED = False
