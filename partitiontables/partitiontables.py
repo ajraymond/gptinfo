@@ -3,7 +3,7 @@
 import sys
 import getopt
 
-import mbr
+from mbr import MBR
 import gpt
 from debug import DEBUG, DEBUG_BYTES
 
@@ -45,7 +45,9 @@ def main():
     block_device = sys.argv[1]
     DEBUG("Analyzing %s" % block_device)
 
-    mbr.analyze(block_device)
+    partition = MBR()
+    partition.read(block_device)
+    partition.display()
     #gpt.analyze_block_device(block_device)
 
 

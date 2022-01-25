@@ -1,12 +1,10 @@
 import struct
+from enum import Enum
 
 from lba import read_lba, LBA_SIZE_BYTES
 from bytehelpers import bytes_hexstr
 from debug import DEBUG, DEBUG_BYTES
 
-
-MBR_PARTITION_ENTRY_SIZE_BYTES = 16
-MBR_PARTITION_ENTRY_CHS_SIZE_BYTES = 3
 
 # https://en.wikipedia.org/wiki/Partition_type#List_of_partition_IDs
 MBR_PARTITION_TYPE_GPT_PROTECTIVE = 0xee
@@ -30,86 +28,149 @@ MBR_PARTITION_TYPES = {
 }
 
 
-def partition_type_description(partition_type: int) -> str:
-	try:
-		description = MBR_PARTITION_TYPES[partition_type]
-	except KeyError:
-		description = "Not documented"
+class MBR:
+    def __init__(self):
+        self.block_device = None
+        self.mbr_bytes = bytes(LBA_SIZE_BYTES)
 
-	return description
+    @staticmethod
+    def partition_type_description(partition_type: int) -> str:
+        try:
+            description = MBR_PARTITION_TYPES[partition_type]
+        except KeyError:
+            description = "Not documented"
 
+        return description
 
-def read_chs(b: bytes) -> tuple:
-    if len(b) != MBR_PARTITION_ENTRY_CHS_SIZE_BYTES:
-        raise ValueError("Invalid CHS size (%d)" % len(b))
+    def _parse_chs(self, chs_bytes: bytes) -> tuple:
+        head = chs_bytes[0]
+        sector = chs_bytes[1] & 0x3F
+        cylinder = ((chs_bytes[1] & 0xC) << 2) | chs_bytes[2]
 
-    head = b[0]
-    sector = b[1] & 0x3F
-    cylinder = ((b[1] & 0xC) << 2) | b[2]
+        return head, sector, cylinder
 
-    return head, sector, cylinder
+    # Partition-level fields
+    def get_partition_status_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
 
+        return entry_bytes[0:1]
 
-def analyze_partition_entry(entry_bytes: bytes) -> None:
-    if len(entry_bytes) != MBR_PARTITION_ENTRY_SIZE_BYTES:
-        raise ValueError("Invalid partition enry length (%d)" % len(entry_bytes))
+    def get_partition_status(self, partition_idx: int) -> int:
+        return struct.unpack('<B', self.get_partition_status_bytes(partition_idx))[0]
 
-    status = entry_bytes[0]
-    first_absolute_sector_chs = read_chs(entry_bytes[1:4])
-    partition_type = entry_bytes[4]
-    last_absolute_sector_chs = read_chs(entry_bytes[5:8])
-    first_absolute_sector_lba = struct.unpack('<I', entry_bytes[8:12])[0]
-    nb_sectors = struct.unpack('<I', entry_bytes[12:16])[0]
+    def get_partition_first_absolute_sector_chs_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
 
-    print("        Status: 0x%.2x" % status)
-    print("        First absolute sector address (CHS): %s" % str(first_absolute_sector_chs))
-    print("        Partition type: 0x%.2x (%s)" % (partition_type, partition_type_description(partition_type)))
-    print("        Last absolute sector (CHS): %s" % str(last_absolute_sector_chs))
-    print("        First absolute sector (LBA): %d" % first_absolute_sector_lba)
-    print("        Nb sectors: %d" % nb_sectors)
+        return entry_bytes[1:4]
 
+    def get_partition_first_absolute_sector_chs(self, partition_idx: int) -> tuple:
+        return self._parse_chs(self.get_partition_first_absolute_sector_chs_bytes(partition_idx))
 
-def analyze(block_device: str) -> None:
-    print("=MBR=")
-    mbr_bytes = read_lba(block_device, 0)
+    def get_partition_type_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
 
-    if len(mbr_bytes) != LBA_SIZE_BYTES:
-        raise ValueError("Invalid MBR length (%d)" % len(mbr_bytes))
+        return entry_bytes[4:5]
 
-    DEBUG("MBR:")
-    DEBUG_BYTES(mbr_bytes)
+    def get_partition_type(self, partition_idx: int) -> int:
+        return struct.unpack('<B', self.get_partition_type_bytes(partition_idx))[0]
 
-    bootstrap_code_1 = mbr_bytes[0:218]
-    zeros = struct.unpack('<H', mbr_bytes[218:220])[0]
-    original_physical_drive = mbr_bytes[220]
-    seconds = mbr_bytes[221]
-    minutes = mbr_bytes[222]
-    hours = mbr_bytes[223]
-    bootstrap_code_2 = mbr_bytes[224:440]
-    disk_signature = struct.unpack('<I', mbr_bytes[440:444])[0]
-    copy_protected = struct.unpack('<H', mbr_bytes[444:446])[0]
-    partition_entry_1 = mbr_bytes[446:462]
-    partition_entry_2 = mbr_bytes[462:478]
-    partition_entry_3 = mbr_bytes[478:494]
-    partition_entry_4 = mbr_bytes[494:510]
-    boot_signature = struct.unpack('<H', mbr_bytes[510:512])[0]
+    def get_partition_last_absolute_sector_chs_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
 
-    print("    Bootstrap code:")
-    print("    %s" % bytes_hexstr(bootstrap_code_1 + bootstrap_code_2))
-    print("    Zeros: %d" % zeros)
-    print("    Original physical drive: 0x%.2x" % original_physical_drive)
-    print("    Seconds: %d" % seconds)
-    print("    Minutes: %d" % minutes)
-    print("    Hours: %d" % hours)
-    print("    Disk signature: %d" % boot_signature)
-    print("    Copy protection: 0x%.4x" % copy_protected)
-    print("    Partition 1:")
-    analyze_partition_entry(partition_entry_1)
-    print("    Partition 2:")
-    analyze_partition_entry(partition_entry_2)
-    print("    Partition 3:")
-    analyze_partition_entry(partition_entry_3)
-    print("    Partition 4:")
-    analyze_partition_entry(partition_entry_4)
-    print("    Boot signature: 0x%.4x" % boot_signature)
+        return entry_bytes[5:8]
+
+    def get_partition_last_absolute_sector_chs(self, partition_idx: int) -> tuple:
+        return self._parse_chs(self.get_partition_last_absolute_sector_chs_bytes(partition_idx))
+
+    def get_partition_first_absolute_sector_lba_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[8:12]
+
+    def get_partition_first_absolute_sector_lba(self, partition_idx: int) -> int:
+        return struct.unpack('<I', self.get_partition_first_absolute_sector_lba_bytes(partition_idx))[0]
+
+    def get_partition_nb_sectors_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[12:16]
+
+    def get_partition_nb_sectors(self, partition_idx: int) -> int:
+        return struct.unpack('<I', self.get_partition_nb_sectors_bytes(partition_idx))[0]
+
+    # Top-level MBR fields
+    def get_bootstrap_code_1_bytes(self) -> bytes:
+        return self.mbr_bytes[0:218]
+
+    def get_disk_timestamp_bytes(self) -> bytes:
+        return self.mbr_bytes[218:224]
+
+    def get_disk_timestamp(self) -> tuple:
+        b = self.get_disk_timestamp_bytes()
+
+        zeros = struct.unpack('<H', b[0:2])[0]
+        original_physical_drive = b[2]
+        seconds = b[3]
+        minutes = b[4]
+        hours = b[5]
+
+        return zeros, original_physical_drive, seconds, minutes, hours
+
+    def get_bootstrap_code_2_bytes(self, extended: bool = False) -> bytes:
+        if extended:
+            size = 222
+        else:
+            size = 216
+
+        return self.mbr_bytes[224:224+size]
+
+    def get_bootstrap_code_bytes(self, extended: bool = False) -> bytes:
+        return self.get_bootstrap_code_1_bytes() + self.get_bootstrap_code_2_bytes(extended)
+
+    def get_disk_signature_bytes(self) -> bytes:
+        return self.mbr_bytes[440:446]
+
+    def get_disk_signature(self) -> tuple:
+        b = self.get_disk_signature_bytes()
+
+        signature = struct.unpack('<I', b[0:4])[0]
+        copy_protected = struct.unpack('<H', b[4:6])[0]
+
+        return signature, copy_protected
+
+    def get_partition_bytes(self, partition_idx: int) -> bytes:
+        if not (0 <= partition_idx <= 3):
+            raise ValueError("Invalid partition index (%d)" % partition_idx)
+
+        start_addr = 446 + partition_idx*16
+        return self.mbr_bytes[start_addr:start_addr+16]
+
+    def get_boot_signature_bytes(self) -> bytes:
+        return self.mbr_bytes[510:512]
+
+    def get_boot_signature(self) -> int:
+        return struct.unpack('<H', self.get_boot_signature_bytes())[0]
+
+    def read(self, block_device: str) -> None:
+        self.block_device = block_device
+        self.mbr_bytes = read_lba(block_device, 0)
+
+    def display_partition(self, partition_idx: int) -> None:
+        print("    Status: 0x%.2x" % self.get_partition_status(partition_idx))
+        print("    First absolute sector address (CHS): %s" % str(self.get_partition_first_absolute_sector_chs(partition_idx)))
+        partition_type = self.get_partition_type(partition_idx)
+        print("    Partition type: 0x%.2x (%s)" % (partition_type, MBR.partition_type_description(partition_type)))
+        print("    Last absolute sector (CHS): %s" % str(self.get_partition_last_absolute_sector_chs(partition_idx)))
+        print("    First absolute sector (LBA): %d" % self.get_partition_first_absolute_sector_lba(partition_idx))
+        print("    Nb sectors: %d" % self.get_partition_nb_sectors(partition_idx))
+
+    def display(self):
+        print("Bootstrap code:")
+        print(bytes_hexstr(self.get_bootstrap_code_bytes()))
+        print("Disk timestamp: zeros=%d original_physical_drive=0x%.2x seconds=%d minutes=%d hours=%d" % self.get_disk_timestamp())
+        print("Disk signature: signature=%d protection=0x%.4x" % self.get_disk_signature())
+        for i in range(4):
+            print("Partition %d:" % i)
+            self.display_partition(i)
+        print("Boot signature: 0x%.4x" % self.get_boot_signature())
 
