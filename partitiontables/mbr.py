@@ -5,6 +5,7 @@ from lba import read_lba, LBA_SIZE_BYTES
 from bytehelpers import bytes_hexstr
 from debug import DEBUG, DEBUG_BYTES
 
+MBR_NB_PRIMARY_PARTITIONS = 4
 
 # https://en.wikipedia.org/wiki/Partition_type#List_of_partition_IDs
 MBR_PARTITION_TYPE_GPT_PROTECTIVE = 0xee
@@ -58,6 +59,8 @@ class MBR:
     def get_partition_status(self, partition_idx: int) -> int:
         return struct.unpack('<B', self.get_partition_status_bytes(partition_idx))[0]
 
+    #
+
     def get_partition_first_absolute_sector_chs_bytes(self, partition_idx: int) -> bytes:
         entry_bytes = self.get_partition_bytes(partition_idx)
 
@@ -65,6 +68,8 @@ class MBR:
 
     def get_partition_first_absolute_sector_chs(self, partition_idx: int) -> tuple:
         return self._parse_chs(self.get_partition_first_absolute_sector_chs_bytes(partition_idx))
+
+    #
 
     def get_partition_type_bytes(self, partition_idx: int) -> bytes:
         entry_bytes = self.get_partition_bytes(partition_idx)
@@ -74,6 +79,8 @@ class MBR:
     def get_partition_type(self, partition_idx: int) -> int:
         return struct.unpack('<B', self.get_partition_type_bytes(partition_idx))[0]
 
+    #
+
     def get_partition_last_absolute_sector_chs_bytes(self, partition_idx: int) -> bytes:
         entry_bytes = self.get_partition_bytes(partition_idx)
 
@@ -82,6 +89,8 @@ class MBR:
     def get_partition_last_absolute_sector_chs(self, partition_idx: int) -> tuple:
         return self._parse_chs(self.get_partition_last_absolute_sector_chs_bytes(partition_idx))
 
+    #
+
     def get_partition_first_absolute_sector_lba_bytes(self, partition_idx: int) -> bytes:
         entry_bytes = self.get_partition_bytes(partition_idx)
 
@@ -89,6 +98,8 @@ class MBR:
 
     def get_partition_first_absolute_sector_lba(self, partition_idx: int) -> int:
         return struct.unpack('<I', self.get_partition_first_absolute_sector_lba_bytes(partition_idx))[0]
+
+    #
 
     def get_partition_nb_sectors_bytes(self, partition_idx: int) -> bytes:
         entry_bytes = self.get_partition_bytes(partition_idx)
@@ -101,6 +112,8 @@ class MBR:
     # Top-level MBR fields
     def get_bootstrap_code_1_bytes(self) -> bytes:
         return self.mbr_bytes[0:218]
+
+    #
 
     def get_disk_timestamp_bytes(self) -> bytes:
         return self.mbr_bytes[218:224]
@@ -116,6 +129,8 @@ class MBR:
 
         return zeros, original_physical_drive, seconds, minutes, hours
 
+    #
+
     def get_bootstrap_code_2_bytes(self, extended: bool = False) -> bytes:
         if extended:
             size = 222
@@ -124,8 +139,12 @@ class MBR:
 
         return self.mbr_bytes[224:224+size]
 
+    #
+
     def get_bootstrap_code_bytes(self, extended: bool = False) -> bytes:
         return self.get_bootstrap_code_1_bytes() + self.get_bootstrap_code_2_bytes(extended)
+
+    #
 
     def get_disk_signature_bytes(self) -> bytes:
         return self.mbr_bytes[440:446]
@@ -138,6 +157,8 @@ class MBR:
 
         return signature, copy_protected
 
+    #
+
     def get_partition_bytes(self, partition_idx: int) -> bytes:
         if not (0 <= partition_idx <= 3):
             raise ValueError("Invalid partition index (%d)" % partition_idx)
@@ -145,11 +166,15 @@ class MBR:
         start_addr = 446 + partition_idx*16
         return self.mbr_bytes[start_addr:start_addr+16]
 
+    #
+
     def get_boot_signature_bytes(self) -> bytes:
         return self.mbr_bytes[510:512]
 
     def get_boot_signature(self) -> int:
         return struct.unpack('<H', self.get_boot_signature_bytes())[0]
+
+    #
 
     def read(self, block_device: str) -> None:
         self.block_device = block_device
@@ -169,7 +194,7 @@ class MBR:
         print(bytes_hexstr(self.get_bootstrap_code_bytes()))
         print("Disk timestamp: zeros=%d original_physical_drive=0x%.2x seconds=%d minutes=%d hours=%d" % self.get_disk_timestamp())
         print("Disk signature: signature=%d protection=0x%.4x" % self.get_disk_signature())
-        for i in range(4):
+        for i in range(MBR_NB_PRIMARY_PARTITIONS):
             print("Partition %d:" % i)
             self.display_partition(i)
         print("Boot signature: 0x%.4x" % self.get_boot_signature())

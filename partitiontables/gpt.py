@@ -10,6 +10,7 @@ GPT_PARTITION_ENTRY_SIZE_BYTES = 128
 GPT_NB_PARTITION_ENTRIES = 128
 GPT_PARTITION_ENTRIES_PER_LBA = 4
 GPT_GUID_SIZE_BYTES = 16
+GPT_SIZE_LBA = 33
 
 # https://en.wikipedia.org/wiki/GUID_Partition_Table#Partition_type_GUIDs
 GPT_PARTITION_TYPE_GUID_UNUSED = '00000000-0000-0000-0000-000000000000'
@@ -52,151 +53,318 @@ GPT_PARTITION_TYPE_GUIDS = {
 }
 
 
-def partition_type_description(guid: str) -> str:
-	try:
-		description = GPT_PARTITION_TYPE_GUIDS[guid.lower()]
-	except KeyError:
-		description = "Not documented"
+class GPT:
+    def __init__(self):
+        self.block_device = None
+        self.mbr_bytes = bytes(LBA_SIZE_BYTES)
+        self.primary_gpt_bytes = bytes(LBA_SIZE_BYTES*GPT_SIZE_LBA)
+        self.backup_gpt_bytes = bytes(LBA_SIZE_BYTES*GPT_SIZE_LBA)
 
-	return description
+    @staticmethod
+    def get_guid_str(guid: bytes) -> str:
+        if len(guid) != GPT_GUID_SIZE_BYTES:
+            raise ValueError("Invalid UUID length (%d)" % len(guid))
 
+        seg1 = struct.unpack('<I', guid[0:4])[0]
+        seg2 = struct.unpack('<H', guid[4:6])[0]
+        seg3 = struct.unpack('<H', guid[6:8])[0]
+        seg4 = struct.unpack('>H', guid[8:10])[0]
+        seg5 = struct.unpack('>Q', b'\x00\x00' + guid[10:])[0]
 
-def get_uuid_str(uuid: bytes) -> str:
-    if len(uuid) != GPT_GUID_SIZE_BYTES:
-        raise ValueError("Invalid UUID length (%d)" % len(uuid))
+        s = '%.8x-%.4x-%.4x-%.4x-%.12x' % (seg1, seg2, seg3, seg4, seg5)
 
-    seg1 = struct.unpack('<I', uuid[0:4])[0]
-    seg2 = struct.unpack('<H', uuid[4:6])[0]
-    seg3 = struct.unpack('<H', uuid[6:8])[0]
-    seg4 = struct.unpack('>H', uuid[8:10])[0]
-    seg5 = struct.unpack('>Q', b'\x00\x00' + uuid[10:])[0]
-
-    s = '%.8x-%.4x-%.4x-%.4x-%.12x' % (seg1, seg2, seg3, seg4, seg5)
-
-    return s
-
-
-def get_partition_entry(lba: bytes, entry_idx: int) -> bytes:
-    if len(lba) != LBA_SIZE_BYTES:
-        raise ValueError("Invalid LBA size (%d)" % len(lba))
-
-    if not (0 <= entry_idx <= 3):
-        raise ValueError("Invalid entry_idx (%d)" % entry_idx)
-
-    entry_bytes = lba[entry_idx*GPT_PARTITION_ENTRY_SIZE_BYTES : (entry_idx+1)*GPT_PARTITION_ENTRY_SIZE_BYTES]
-
-    return entry_bytes
+        return s
 
 
-def analyze_header(header_bytes: bytes) -> None:
-    if len(header_bytes) != LBA_SIZE_BYTES:
-        raise ValueError("Invalid header length (%d)" % len(header_bytes))
+    # Partition-level fields
 
-    DEBUG("Header:")
-    DEBUG_BYTES(header_bytes)
+    @staticmethod
+    def partition_type_description(partition_guid: str) -> str:
+        try:
+            description = GPT_PARTITION_TYPE_GUIDS[partition_guid.lower()]
+        except KeyError:
+            description = "Not documented"
 
-    signature_str = str(header_bytes[0:8], encoding='ascii')
-    revision_tuple = struct.unpack('<HH', header_bytes[8:12])
-    header_size = struct.unpack('<I', header_bytes[12:16])[0]
-    crc32 = struct.unpack('<I', header_bytes[16:20])[0]
-    reserved = struct.unpack('<I', header_bytes[20:24])[0]
-    current_lba_idx = struct.unpack('<Q', header_bytes[24:32])[0]
-    backup_lba_idx = struct.unpack('<Q', header_bytes[32:40])[0]
-    first_usable_lba_idx = struct.unpack('<Q', header_bytes[40:48])[0]
-    last_usable_lba_idx = struct.unpack('<Q', header_bytes[48:56])[0]
-    disk_guid_str = get_uuid_str(header_bytes[56:72])
-    starting_lba_partition_entries_idx = struct.unpack('<Q', header_bytes[72:80])[0]
-    nb_partition_entries = struct.unpack('<I', header_bytes[80:84])[0]
-    partition_entry_size = struct.unpack('<I', header_bytes[84:88])[0]
-    crc32_partition_entries = struct.unpack('<I', header_bytes[88:92])[0]
-    reserved_tail_bytes = header_bytes[92:LBA_SIZE_BYTES]
-
-    print("    Signature: %s" % signature_str)
-    print("    Revision: %d.%d" % (revision_tuple[1], revision_tuple[0]))
-    print("    Header size: %d" % header_size)
-    print("    CRC32: %d" % crc32)
-    print("    Reserved: %d" % reserved)
-    print("    Current LBA: %d" % current_lba_idx)
-    print("    Backup LBA: %d" % backup_lba_idx)
-    print("    First usable LBA for partitions: %d" % first_usable_lba_idx)
-    print("    Last usable LBA for partitions: %d" % last_usable_lba_idx)
-    print("    Disk GUID: %s" % disk_guid_str)
-    print("    Starting LBA of array of partition entries: %d" % starting_lba_partition_entries_idx)
-    print("    Number of partition entries in array: %d" % nb_partition_entries)
-    print("    Size of a single partition entry: %d" % partition_entry_size)
-    print("    CRC32 of partition entries array: %d" % crc32_partition_entries)
-    print("    Reserved: %s" % bytes_hexstr(reserved_tail_bytes))
+        return description
 
 
-def analyze_partition_entry_attributes(attributes: int) -> None:
-    if not (0 <= attributes < 2**64):
-        raise ValueError("Invalid attributes (%d)" % attributes)
+    def get_partition_bytes(self, partition_idx: int) -> bytes:
+        if not (0 <= partition_idx <= 127):
+            raise ValueError("Invalid partition index (%d)" % partition_idx)
 
-    if attributes & 1:
-        print("        Platform required")
-    if attributes & 2:
-        print("        EFI firmware should ignore the content of the partition and not try to read from it")
-    if attributes & 4:
-        print("        Legacy BIOS bootable")
+        lba = partition_idx // GPT_PARTITION_ENTRIES_PER_LBA
+        sub_lba = partition_idx % GPT_PARTITION_ENTRIES_PER_LBA
 
-    reserved = (attributes >> 3) & 0x1FFFFFFFFFFF
-    print("        Reserved: %d" % reserved)
+        partitions_bytes = self.primary_gpt_bytes[LBA_SIZE_BYTES:]
+        start_addr = (lba * LBA_SIZE_BYTES) + (sub_lba * GPT_PARTITION_ENTRY_SIZE_BYTES)
+        partition_bytes = partitions_bytes[start_addr:start_addr+GPT_PARTITION_ENTRY_SIZE_BYTES]
 
-    specific = (attributes >> 48) & 0xFFFF
-    print("        Specific: %d" % specific)
+        return partition_bytes
+
+    #
+
+    def get_partition_type_guid_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[0:16]
+
+    def get_partition_type_guid(self, partition_idx: int) -> str:
+        return GPT.get_guid_str(self.get_partition_type_guid_bytes(partition_idx))
+
+    #
+
+    def get_partition_unique_guid_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[16:32]
+
+    def get_partition_unique_guid(self, partition_idx: int) -> str:
+        return GPT.get_guid_str(self.get_partition_unique_guid_bytes(partition_idx))
+
+    #
+
+    def get_partition_first_lba_idx_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[32:40]
+
+    def get_partition_first_lba_idx(self, partition_idx: int) -> int:
+        return struct.unpack('<Q', self.get_partition_first_lba_idx_bytes(partition_idx))[0]
+
+    #
+
+    def get_partition_last_lba_idx_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[40:48]
+
+    def get_partition_last_lba_idx(self, partition_idx: int) -> int:
+        return struct.unpack('<Q', self.get_partition_last_lba_idx_bytes(partition_idx))[0]
+
+    #
+
+    def get_partition_attribute_flags_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[48:56]
+
+    def get_partition_attribute_flags(self, partition_idx: int) -> int:
+        return struct.unpack('<Q', self.get_partition_attribute_flags_bytes(partition_idx))[0]
+
+    #
+
+    def get_partition_name_bytes(self, partition_idx: int) -> bytes:
+        entry_bytes = self.get_partition_bytes(partition_idx)
+
+        return entry_bytes[56:128]
+
+    def get_partition_name(self, partition_idx: int) -> str:
+        return str(self.get_partition_name_bytes(partition_idx), encoding='utf-16le')
+
+    # Top-level MBR fields
+    def get_header_bytes(self) -> bytes:
+        return self.primary_gpt_bytes[0:LBA_SIZE_BYTES]
+
+    def get_signature_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[0:8]
+
+    def get_signature(self) -> str:
+        return str(self.get_signature_bytes(), encoding='ascii')
+
+    #
+
+    def get_revision_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[8:12]
+
+    def get_revision(self) -> tuple:
+        revision_tuple = struct.unpack('<HH', self.get_revision_bytes())
+        return revision_tuple[1], revision_tuple[0]
+
+    #
+
+    def get_header_size_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[12:16]
+
+    def get_header_size(self) -> int:
+        return struct.unpack('<I', self.get_header_size_bytes())[0]
+
+    #
+
+    def get_crc_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[16:20]
+
+    def get_crc(self) -> int:
+        return struct.unpack('<I', self.get_crc_bytes())[0]
+
+    #
+
+    def get_reserved1_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[20:24]
+
+    def get_reserved1(self) -> int:
+        return struct.unpack('<I', self.get_reserved1_bytes())[0]
+    #
+
+    def get_current_lba_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[24:32]
+
+    def get_current_lba(self) -> int:
+        return struct.unpack('<Q', self.get_current_lba_bytes())[0]
+
+    #
+
+    def get_backup_lba_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[32:40]
+
+    def get_backup_lba(self) -> int:
+        return struct.unpack('<Q', self.get_backup_lba_bytes())[0]
+
+    #
+
+    def get_first_usable_lba_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[40:48]
+
+    def get_first_usable_lba(self) -> int:
+        return struct.unpack('<Q', self.get_first_usable_lba_bytes())[0]
+
+    #
+
+    def get_last_usable_lba_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[48:56]
+
+    def get_last_usable_lba(self) -> int:
+        return struct.unpack('<Q', self.get_last_usable_lba_bytes())[0]
+
+    #
+
+    def get_disk_guid_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[56:72]
+
+    def get_disk_guid(self) -> bytes:
+        return GPT.get_guid_str(self.get_disk_guid_bytes())
+
+    #
+
+    def get_starting_partition_lba_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[72:80]
+
+    def get_starting_partition_lba(self) -> int:
+        return struct.unpack('<Q', self.get_starting_partition_lba_bytes())[0]
+
+    #
+
+    def get_nb_partitions_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[80:84]
+
+    def get_nb_partitions(self) -> int:
+        return struct.unpack('<I', self.get_nb_partitions_bytes())[0]
+
+    #
+
+    def get_partition_size_lba_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[84:88]
+
+    def get_partition_size_lba(self) -> int:
+        return struct.unpack('<I', self.get_partition_size_lba_bytes())[0]
+
+    #
+
+    def get_crc_partitions_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[88:92]
+
+    def get_crc_partitions(self) -> int:
+        return struct.unpack('<I', self.get_crc_partitions_bytes())[0]
+
+    #
+
+    def get_reserved2_bytes(self) -> bytes:
+        header_bytes = self.get_header_bytes()
+
+        return header_bytes[92:LBA_SIZE_BYTES]
+
+    #
+
+    def read(self, block_device: str) -> None:
+        self.block_device = block_device
+        self.mbr_bytes = read_lba(block_device, 0, 1)
+        self.primary_gpt_bytes = read_lba(block_device, 1, GPT_SIZE_LBA)
+        self.backup_gpt_bytes = read_lba(block_device, -33, GPT_SIZE_LBA)
+
+    @staticmethod
+    def display_partition_attribute_flags(attributes: int) -> None:
+        if not (0 <= attributes < 2**64):
+            raise ValueError("Invalid attributes (%d)" % attributes)
+
+        if attributes & 1:
+            print("        Platform required")
+        if attributes & 2:
+            print("        EFI firmware should ignore the content of the partition and not try to read from it")
+        if attributes & 4:
+            print("        Legacy BIOS bootable")
+
+        reserved = (attributes >> 3) & 0x1FFFFFFFFFFF
+        print("        Reserved: %d" % reserved)
+
+        specific = (attributes >> 48) & 0xFFFF
+        print("        Specific: %d" % specific)
 
 
-def analyze_partition_entry(entry_bytes: bytes) -> None:
-    if len(entry_bytes) != GPT_PARTITION_ENTRY_SIZE_BYTES:
-        raise ValueError("Invalid partition enry length (%d)" % len(entry_bytes))
+    def display_partition(self, partition_idx: int) -> None:
+        partition_type_guid_str = self.get_partition_type_guid(partition_idx)
+        print("    Partition type GUID: %s [%s]" % (partition_type_guid_str, GPT.partition_type_description(partition_type_guid_str)))
+        print("    Partition GUID: %s" % self.get_partition_unique_guid(partition_idx))
+        print("    First LBA: %d" % self.get_partition_first_lba_idx(partition_idx))
+        print("    Last LBA: %d" % self.get_partition_last_lba_idx(partition_idx))
+        print("    Attribute flags: %d" % self.get_partition_attribute_flags(partition_idx))
+        GPT.display_partition_attribute_flags(self.get_partition_attribute_flags(partition_idx))
+        print("    Partition name: %s" % self.get_partition_name(partition_idx))
 
-    partition_type_guid_str = get_uuid_str(entry_bytes[0:16])
+    def display(self):
+        print("Signature: %s" % self.get_signature())
+        print("Revision: %d.%d" % self.get_revision())
+        print("Header size: %d" % self.get_header_size())
+        print("CRC32: %d" % self.get_crc())
+        print("Reserved: %d" % self.get_reserved1())
+        print("Current LBA: %d" % self.get_current_lba())
+        print("Backup LBA: %d" % self.get_backup_lba())
+        print("First usable LBA for partitions: %d" % self.get_first_usable_lba())
+        print("Last usable LBA for partitions: %d" % self.get_last_usable_lba())
+        print("Disk GUID: %s" % self.get_disk_guid())
+        print("Starting LBA of array of partition entries: %d" % self.get_starting_partition_lba())
+        print("Number of partition entries in array: %d" % self.get_nb_partitions())
+        print("Size (LBA) of a single partition entry: %d" % self.get_partition_size_lba())
+        print("CRC32 of partition entries array: %d" % self.get_crc_partitions())
+        print("Reserved: %s" % bytes_hexstr(self.get_reserved2_bytes()))
 
-    if partition_type_guid_str == GPT_PARTITION_TYPE_GUID_UNUSED:
-        return
-
-    DEBUG("Partition entry")
-    DEBUG_BYTES(entry_bytes)
-
-    unique_partition_guid_str = get_uuid_str(entry_bytes[16:32])
-    first_lba_idx = struct.unpack('<Q', entry_bytes[32:40])[0]
-    last_lba_idx = struct.unpack('<Q', entry_bytes[40:48])[0]
-    attribute_flags = struct.unpack('<Q', entry_bytes[48:56])[0]
-    partition_name_bytes = entry_bytes[56:128]
-    partition_name_str = str(partition_name_bytes, encoding='utf-16le')
-
-
-    print("    Partition type GUID: %s [%s]" % (partition_type_guid_str, partition_type_description(partition_type_guid_str)))
-    print("    Partition GUID: %s" % unique_partition_guid_str)
-    print("    First LBA: %d" % first_lba_idx)
-    print("    Last LBA: %d" % last_lba_idx)
-    print("    Attribute flags: %d" % attribute_flags)
-    analyze_partition_entry_attributes(attribute_flags)
-    print("    Partition name: %s" % partition_name_str)
-
-
-def analyze_block_device(block_device: str) -> None:
-    # Primary
-    print("=GPT Primary=")
-    header_bytes = read_lba(block_device, 1)
-    analyze_header(header_bytes)
-
-    for i in range(GPT_NB_PARTITION_ENTRIES // GPT_PARTITION_ENTRIES_PER_LBA):
-        lba_bytes = read_lba(block_device, 2 + i)
-
-        for j in range(GPT_PARTITION_ENTRIES_PER_LBA):
-            entry_bytes = get_partition_entry(lba_bytes, j)
-            analyze_partition_entry(entry_bytes)
-
-    # Backup
-    print("=GPT Backup=")
-    header_bytes = read_lba(block_device, -1)
-    analyze_header(header_bytes)
-
-    for i in range(GPT_NB_PARTITION_ENTRIES // GPT_PARTITION_ENTRIES_PER_LBA):
-        lba_bytes = read_lba(block_device, -33 + i)
-
-        for j in range(GPT_PARTITION_ENTRIES_PER_LBA):
-            entry_bytes = get_partition_entry(lba_bytes, j)
-            analyze_partition_entry(entry_bytes)
-
+        for i in range(GPT_NB_PARTITION_ENTRIES):
+            if self.get_partition_type_guid(i) != GPT_PARTITION_TYPE_GUID_UNUSED:
+                print("Partition %d:" % i)
+                self.display_partition(i)

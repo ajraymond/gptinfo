@@ -4,7 +4,7 @@ import sys
 import getopt
 
 from mbr import MBR
-import gpt
+from gpt import GPT
 from debug import DEBUG, DEBUG_BYTES
 
 
@@ -45,10 +45,13 @@ def main():
     block_device = sys.argv[1]
     DEBUG("Analyzing %s" % block_device)
 
-    partition = MBR()
+    #partition = MBR()
+    #partition.read(block_device)
+    #partition.display()
+
+    partition = GPT()
     partition.read(block_device)
     partition.display()
-    #gpt.analyze_block_device(block_device)
 
 
 if __name__ == '__main__':
